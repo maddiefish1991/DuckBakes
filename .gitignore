@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+*.textClipping
+.AppleDouble
+.LSOverride
+
+# Environment / secrets
+.env
+.env.*
+*.key
