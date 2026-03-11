@@ -1214,7 +1214,6 @@ function App() {
             <h1 style={S.title}>Bake Log</h1>
             <button style={S.btn} onClick={()=>{ setEditingBakeId(null); setBakeForm(emptyBake()); setView("newBake"); }}>+ Log a Bake</button>
           </div>
-          <ActivityFeed myBakes={myBakes} theirBakes={theirBakes} recipes={recipes}/>
           <div style={{ display:"flex", gap:6, marginBottom:14 }}>
             {[["mine", `${PROFILES[profile].emoji} My Bakes`], ["theirs", `${PROFILES[other].emoji} Their Bakes`], ["all","🐥🦆 All Bakes"]].map(([tab, label]) => (
               <button key={tab} onClick={()=>setJournalTab(tab)}
@@ -1260,6 +1259,7 @@ function App() {
               </div>
             );
           })}
+          <ActivityFeed myBakes={myBakes} theirBakes={theirBakes} recipes={recipes}/>
         </main>
       </div>
     );
