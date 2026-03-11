@@ -659,11 +659,12 @@ function MiniBar({ value, max, color="#8b5e3c", height=18 }) {
   );
 }
 
-function ActivityFeed({ myBakes, theirBakes, recipes }) {
+function ActivityFeed({ myBakes, theirBakes, recipes, openModal, myProfile }) {
   const [activity, setActivity] = useState([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => { getActivity().then(a => { setActivity(a); setLoading(false); }); }, []);
-  const allBakes = [...myBakes, ...theirBakes];
+  const other = otherProfile(myProfile);
+  const allBakes = [...myBakes.map(b=>({...b,_prof:myProfile})), ...theirBakes.map(b=>({...b,_prof:other}))];
   const getRecipe = id => recipes.find(r => r.id === id);
   if (loading) return <div style={{ ...S.card, textAlign:"center", color:C.muted, fontFamily:"monospace", fontSize:11, padding:16 }}>Loading activity…</div>;
   if (activity.length === 0) return null;
@@ -671,7 +672,7 @@ function ActivityFeed({ myBakes, theirBakes, recipes }) {
     <div style={{ ...S.card, marginBottom:18 }}>
       <div style={{ ...S.sh, marginBottom:12 }}>Recent Activity</div>
       {activity.map((item, i) => {
-        const bake = allBakes.find(b => b.id === item.bake_id);
+        const bake = allBakes.find(b => b.id === item.bake_id && b._prof === item.bake_profile);
         const recipe = bake ? getRecipe(bake.recipeId) : null;
         const actor = PROFILES[item.type === "like" ? item.liked_by : item.author];
         const target = PROFILES[item.bake_profile];
@@ -1259,7 +1260,7 @@ function App() {
               </div>
             );
           })}
-          <ActivityFeed myBakes={myBakes} theirBakes={theirBakes} recipes={recipes}/>
+          <ActivityFeed myBakes={myBakes} theirBakes={theirBakes} recipes={recipes} openModal={openModal} myProfile={profile}/>
         </main>
       </div>
     );
