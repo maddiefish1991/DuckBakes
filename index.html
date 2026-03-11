@@ -30,35 +30,36 @@
 <script type="text/babel">
 const { useState, useEffect, useCallback } = React;
 
-// ── Supabase ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = "https://qpflgdsalhrpwbobepgn.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwZmxnZHNhbGhycHdib2JlcGduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwMDIxMzMsImV4cCI6MjA4ODU3ODEzM30.EHNZd3ya0IrTY61O69TKhUF915KLiHpWS8lGFEkdJPc";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// ── Profiles ──────────────────────────────────────────────────────────────────
 const PROFILES = {
   "rubber-duck": { label:"FRD", emoji:"🐥", color:"#c17f2a", light:"#fdf5e0", muted:"#e8d5a0" },
   "lover-duck":  { label:"FLD", emoji:"🦆", color:"#d4307a", light:"#fdf0f6", muted:"#f0b8d4" },
 };
 const otherProfile = p => p === "rubber-duck" ? "lover-duck" : "rubber-duck";
 
-// ── DB helpers ────────────────────────────────────────────────────────────────
+// Safe upsert-only save — never deletes all records.
+// Upserts changed/new records individually so a failed save can't wipe your data.
 async function dbSave(table, arr, profile=null) {
   try {
-    if (profile) {
-      await sb.from(table).delete().eq("profile", profile);
-      if (arr.length > 0) {
-        const rows = arr.map(item => ({ id: item.id, data: item, profile, updated_at: new Date().toISOString() }));
-        await sb.from(table).upsert(rows);
-      }
-    } else {
-      await sb.from(table).delete().neq("id", -1);
-      if (arr.length > 0) {
-        const rows = arr.map(item => ({ id: item.id, data: item, updated_at: new Date().toISOString() }));
-        await sb.from(table).upsert(rows);
-      }
+    if (arr.length > 0) {
+      const rows = profile
+        ? arr.map(item => ({ id: item.id, data: item, profile, updated_at: new Date().toISOString() }))
+        : arr.map(item => ({ id: item.id, data: item, updated_at: new Date().toISOString() }));
+      await sb.from(table).upsert(rows);
     }
   } catch(e) { console.error("dbSave error", table, e); }
+}
+
+// Explicit single-record delete — only called when user deliberately deletes a bake.
+async function dbDeleteOne(table, id, profile=null) {
+  try {
+    let query = sb.from(table).delete().eq("id", id);
+    if (profile) query = query.eq("profile", profile);
+    await query;
+  } catch(e) { console.error("dbDeleteOne error", table, e); }
 }
 
 async function dbLoad(table, fallback, profile=null) {
@@ -72,7 +73,6 @@ async function dbLoad(table, fallback, profile=null) {
   return fallback;
 }
 
-// ── Likes ─────────────────────────────────────────────────────────────────────
 async function getLikes(bakeId, bakeProfile) {
   const { data } = await sb.from("likes").select("liked_by").eq("bake_id", bakeId).eq("bake_profile", bakeProfile);
   return (data || []).map(r => r.liked_by);
@@ -88,7 +88,6 @@ async function toggleLike(bakeId, bakeProfile, likedBy) {
   }
 }
 
-// ── Comments ──────────────────────────────────────────────────────────────────
 async function getComments(bakeId, bakeProfile) {
   const { data } = await sb.from("comments").select("*").eq("bake_id", bakeId).eq("bake_profile", bakeProfile).order("created_at");
   return data || [];
@@ -97,7 +96,6 @@ async function addComment(bakeId, bakeProfile, author, body) {
   await sb.from("comments").insert({ bake_id: bakeId, bake_profile: bakeProfile, author, body });
 }
 
-// ── Activity feed ─────────────────────────────────────────────────────────────
 async function getActivity() {
   const [likesRes, commentsRes] = await Promise.all([
     sb.from("likes").select("*").order("created_at", { ascending: false }).limit(20),
@@ -108,7 +106,6 @@ async function getActivity() {
   return [...likes, ...comments].sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 15);
 }
 
-// ── AI recipe generation ──────────────────────────────────────────────────────
 async function generateRecipeFromBake(bakeData) {
   const { freeformIngredients, freeformSteps, bulkTime, proofTime, ovenTemp, vessel, notes, folds } = bakeData;
   const ingList = freeformIngredients.filter(i=>i.name).map(i=>`${i.amount}${i.unit} ${i.name}`).join(", ");
@@ -144,7 +141,6 @@ Generate a sourdough recipe from this. Respond ONLY with valid JSON, no markdown
   }
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
 const LOCATIONS = ["Home", "Work", "Other"];
 const VESSELS = ["Dutch Oven","Combo Cooker","Loaf Tin","Cast Iron Skillet","Clay Baker","Open Bake","Pullman Pan"];
 const OUTCOMES = {
@@ -192,7 +188,6 @@ const BASE_RECIPES = [
     steps:["Mix flours and 300g water. Autolyse 45 min.","Add starter and remaining water.","Add salt. Stretch & fold every 30 min x4.","Bulk ferment 4-5 hrs at 76F until 50% rise.","Shape, place in banneton seam-up. Cold proof 10-16 hrs.","Preheat Dutch oven 1 hr at 500F. Bake covered 20 min, uncovered 25 min."],
   },
 ];
-const SAMPLE_BAKES = [];
 
 const emptyFold = () => ({ id: Date.now()+Math.random(), elapsedSecs:null, technique:"Stretch & Fold", doughTemp:"" });
 const emptyBake = () => ({
@@ -223,7 +218,6 @@ function timeAgo(ts) {
   return `${Math.floor(diff/86400)}d ago`;
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
 const C = {
   cream:"#f5f0e8", paper:"#fffdf7", ink:"#1c120a", brown:"#8b5e3c",
   muted:"#8b6a50", border:"#e0d4b8", tag:"#e8dcc8", tagText:"#5a3e28",
@@ -252,7 +246,6 @@ const S = {
   g3:     { display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 },
 };
 
-// ── Small components ──────────────────────────────────────────────────────────
 function Stars({ value, onChange }) {
   return (
     <div style={{ display:"flex", gap:2 }}>
@@ -274,15 +267,7 @@ function DuckBadge({ prof }) {
   if (!p) return null;
   return <span style={{ background:p.light, color:p.color, border:`1px solid ${p.muted}`, padding:"1px 7px", borderRadius:20, fontSize:10, fontFamily:"monospace" }}>{p.emoji} {p.label}</span>;
 }
-function VideoEmbed({ url }) {
-  if (!url) return null;
-  const yt = getYouTubeId(url), vm = getVimeoId(url);
-  if (yt) return <div style={{ marginTop:10, borderRadius:4, overflow:"hidden", aspectRatio:"16/9" }}><iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${yt}`} frameBorder="0" allowFullScreen style={{ display:"block" }}/></div>;
-  if (vm) return <div style={{ marginTop:10, borderRadius:4, overflow:"hidden", aspectRatio:"16/9" }}><iframe width="100%" height="100%" src={`https://player.vimeo.com/video/${vm}`} frameBorder="0" allowFullScreen style={{ display:"block" }}/></div>;
-  return <div style={{ marginTop:8, padding:"6px 10px", background:"#f0e8d8", borderRadius:3, fontSize:11, fontFamily:"monospace", color:C.muted }}>📹 Video attached</div>;
-}
-// ── Time Input (hours + minutes steppers) ────────────────────────────────────
-// Stores as { h, m } object. fmtTime() renders for display.
+
 function fmtTime(t) {
   if (!t || (t.h === 0 && t.m === 0)) return null;
   if (t.h > 0 && t.m > 0) return t.h + "h " + t.m + "m";
@@ -316,39 +301,20 @@ function TimeInput({ label, value, onChange, maxH=48 }) {
   );
 }
 
-// ── Flour Search Input ────────────────────────────────────────────────────────
 function FlourSearchInput({ value, onChange, flours, placeholder }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState(value || "");
-
   const matches = flours.filter(f =>
     f.name.toLowerCase().includes(query.toLowerCase()) ||
     (f.brand||"").toLowerCase().includes(query.toLowerCase()) ||
     (f.type||"").toLowerCase().includes(query.toLowerCase())
   ).slice(0, 6);
-
-  function select(flour) {
-    setQuery(flour.name);
-    onChange(flour.name);
-    setOpen(false);
-  }
-
-  function handleChange(e) {
-    setQuery(e.target.value);
-    onChange(e.target.value);
-    setOpen(true);
-  }
-
+  function select(flour) { setQuery(flour.name); onChange(flour.name); setOpen(false); }
+  function handleChange(e) { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }
   return (
     <div style={{ position:"relative" }}>
-      <input
-        style={{ ...S.input, marginBottom:0 }}
-        placeholder={placeholder || "Ingredient name"}
-        value={query}
-        onChange={handleChange}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-      />
+      <input style={{ ...S.input, marginBottom:0 }} placeholder={placeholder || "Ingredient name"} value={query}
+        onChange={handleChange} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}/>
       {open && (matches.length > 0 || query) && (
         <div style={{ position:"absolute", top:"100%", left:0, right:0, background:C.paper, border:"1px solid "+C.border, borderRadius:"0 0 4px 4px", zIndex:200, boxShadow:"0 4px 12px rgba(0,0,0,0.12)", maxHeight:220, overflowY:"auto" }}>
           {matches.map(f => (
@@ -380,7 +346,6 @@ function FlourSearchInput({ value, onChange, flours, placeholder }) {
   );
 }
 
-
 function fmtSecs(s) {
   if (s == null) return "—";
   const m = Math.floor(s/60), sec = s%60;
@@ -401,18 +366,8 @@ function FoldsTable({ folds, doughTempAtMix, doughTempFinal }) {
       <div style={{ ...S.sh, marginBottom:6 }}>Folds & Dough Temp</div>
       {hasTemps && (
         <div style={{ display:"flex", gap:16, marginBottom:10 }}>
-          {doughTempAtMix && (
-            <div style={{ fontFamily:"monospace", fontSize:11 }}>
-              <span style={{ color:C.muted }}>At mix: </span>
-              <span style={{ color:C.brown, fontWeight:600 }}>{doughTempAtMix}</span>
-            </div>
-          )}
-          {doughTempFinal && (
-            <div style={{ fontFamily:"monospace", fontSize:11 }}>
-              <span style={{ color:C.muted }}>Final: </span>
-              <span style={{ color:C.brown, fontWeight:600 }}>{doughTempFinal}</span>
-            </div>
-          )}
+          {doughTempAtMix && <div style={{ fontFamily:"monospace", fontSize:11 }}><span style={{ color:C.muted }}>At mix: </span><span style={{ color:C.brown, fontWeight:600 }}>{doughTempAtMix}</span></div>}
+          {doughTempFinal && <div style={{ fontFamily:"monospace", fontSize:11 }}><span style={{ color:C.muted }}>Final: </span><span style={{ color:C.brown, fontWeight:600 }}>{doughTempFinal}</span></div>}
         </div>
       )}
       {hasFolds && (
@@ -439,48 +394,37 @@ function FoldsTable({ folds, doughTempAtMix, doughTempFinal }) {
   );
 }
 
-// ── Likes & Comments widget ───────────────────────────────────────────────────
-function LikesComments({ bake, bakeProfile, currentProfile, readOnly }) {
+function LikesComments({ bake, bakeProfile, currentProfile }) {
   const [likes, setLikes] = useState([]);
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
   const [loading, setLoading] = useState(true);
-
   useEffect(() => {
     (async () => {
       const [l, c] = await Promise.all([getLikes(bake.id, bakeProfile), getComments(bake.id, bakeProfile)]);
       setLikes(l); setComments(c); setLoading(false);
     })();
   }, [bake.id, bakeProfile]);
-
   async function handleLike() {
     const result = await toggleLike(bake.id, bakeProfile, currentProfile);
     setLikes(prev => result ? [...prev, currentProfile] : prev.filter(l => l !== currentProfile));
   }
-
   async function handleComment(e) {
     e.preventDefault();
     if (!commentText.trim()) return;
     await addComment(bake.id, bakeProfile, currentProfile, commentText.trim());
     const c = await getComments(bake.id, bakeProfile);
-    setComments(c);
-    setCommentText("");
+    setComments(c); setCommentText("");
   }
-
   const liked = likes.includes(currentProfile);
   if (loading) return <div style={{ fontFamily:"monospace", fontSize:10, color:C.muted }}>Loading…</div>;
-
   return (
     <div style={{ marginTop:14, paddingTop:12, borderTop:`1px solid ${C.border}` }}>
       <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
         <button onClick={handleLike} style={{ background:"none", border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:4, fontSize:13, color: liked ? "#c17f2a" : C.muted, fontFamily:"Georgia,serif" }}>
           {liked ? "❤️" : "🤍"} {likes.length > 0 && <span style={{ fontFamily:"monospace", fontSize:11 }}>{likes.length}</span>}
         </button>
-        {likes.length > 0 && (
-          <span style={{ fontFamily:"monospace", fontSize:10, color:C.muted }}>
-            {likes.map(l => PROFILES[l]?.emoji).join(" ")} {likes.map(l => PROFILES[l]?.label).join(", ")}
-          </span>
-        )}
+        {likes.length > 0 && <span style={{ fontFamily:"monospace", fontSize:10, color:C.muted }}>{likes.map(l => PROFILES[l]?.emoji).join(" ")} {likes.map(l => PROFILES[l]?.label).join(", ")}</span>}
       </div>
       {comments.length > 0 && (
         <div style={{ marginBottom:10 }}>
@@ -497,20 +441,15 @@ function LikesComments({ bake, bakeProfile, currentProfile, readOnly }) {
         </div>
       )}
       <div style={{ display:"flex", gap:6 }}>
-        <input
-          style={{ ...S.input, marginBottom:0, fontSize:12, padding:"6px 10px" }}
+        <input style={{ ...S.input, marginBottom:0, fontSize:12, padding:"6px 10px" }}
           placeholder={`Add a comment as ${PROFILES[currentProfile]?.label}…`}
-          value={commentText}
-          onChange={e=>setCommentText(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&handleComment(e)}
-        />
+          value={commentText} onChange={e=>setCommentText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleComment(e)}/>
         <button style={{ ...S.btn, padding:"6px 12px", fontSize:11, flexShrink:0 }} onClick={handleComment}>Post</button>
       </div>
     </div>
   );
 }
 
-// ── Bake Modal ────────────────────────────────────────────────────────────────
 function BakeModal({ bake, bakeProfile, recipe, onClose, currentProfile }) {
   if (!bake) return null;
   return (
@@ -559,7 +498,6 @@ function BakeModal({ bake, bakeProfile, recipe, onClose, currentProfile }) {
   );
 }
 
-// ── Variant Ingredients Editor ────────────────────────────────────────────────
 function VariantIngredientsEditor({ baseIngredients, variantIngredients, onChange, flours=[] }) {
   const rows = variantIngredients.length > 0 ? variantIngredients
     : baseIngredients.map(ing => ({ ...ing, baseAmount: ing.amount, baseName: ing.name, isNew: false }));
@@ -582,12 +520,7 @@ function VariantIngredientsEditor({ baseIngredients, variantIngredients, onChang
         return (
           <div key={row.id} style={{ borderLeft:`3px solid ${changed?"#c17f2a":"transparent"}`, paddingLeft:7, marginBottom:5, background:changed?"#fdf5e6":"transparent", borderRadius:"0 3px 3px 0" }}>
             <div style={{ display:"grid", gridTemplateColumns:"2.5fr 1fr 60px 28px", gap:5, alignItems:"center" }}>
-              <FlourSearchInput
-                value={row.name}
-                onChange={v=>updateRow(idx,{name:v})}
-                flours={flours}
-                placeholder="Ingredient name"
-              />
+              <FlourSearchInput value={row.name} onChange={v=>updateRow(idx,{name:v})} flours={flours} placeholder="Ingredient name"/>
               <input type="number" style={{ ...S.input, marginBottom:0, borderColor:amtChanged?"#c17f2a":"#d0bc98", color:amtChanged?"#8b5e3c":C.ink, fontWeight:amtChanged?"700":"400" }}
                 value={row.amount} onChange={e=>updateRow(idx,{amount:e.target.value})} placeholder="0"/>
               <select style={{ ...S.input, marginBottom:0, padding:"7px 4px" }} value={row.unit} onChange={e=>updateRow(idx,{unit:e.target.value})}>
@@ -603,7 +536,6 @@ function VariantIngredientsEditor({ baseIngredients, variantIngredients, onChang
   );
 }
 
-// ── Flour Pantry ──────────────────────────────────────────────────────────────
 function FlourPantry({ flours, setFlours }) {
   const [editing, setEditing] = useState(null);
   const ef = () => ({ id:Date.now(), name:"", brand:"", protein:"", type:"White Bread", absorption:"Medium", notes:"" });
@@ -686,7 +618,6 @@ function FlourPantry({ flours, setFlours }) {
   );
 }
 
-// ── Recipe Preview Modal ──────────────────────────────────────────────────────
 function RecipePreviewModal({ preview, onConfirm, onCancel }) {
   const [p, setP] = useState(preview);
   if (!p) return null;
@@ -719,7 +650,6 @@ function RecipePreviewModal({ preview, onConfirm, onCancel }) {
   );
 }
 
-// ── MiniBar & Sparkline ───────────────────────────────────────────────────────
 function MiniBar({ value, max, color="#8b5e3c", height=18 }) {
   const pct = max > 0 ? Math.max(3, Math.round((value / max) * 100)) : 0;
   return (
@@ -728,41 +658,20 @@ function MiniBar({ value, max, color="#8b5e3c", height=18 }) {
     </div>
   );
 }
-function Sparkline({ points, color="#8b5e3c", height=48 }) {
-  if (points.length < 2) return null;
-  const w=300, h=height, minV=Math.min(...points), maxV=Math.max(...points), range=maxV-minV||1;
-  const xs=points.map((_,i)=>(i/(points.length-1))*w);
-  const ys=points.map(v=>h-((v-minV)/range)*(h*0.8)-h*0.1);
-  const d=xs.map((x,i)=>`${i===0?"M":"L"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} style={{ width:"100%", height, display:"block" }} preserveAspectRatio="none">
-      <path d={d} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-      {xs.map((x,i) => <circle key={i} cx={x} cy={ys[i]} r="3" fill={color}/>)}
-    </svg>
-  );
-}
 
-// ── Activity Feed ─────────────────────────────────────────────────────────────
 function ActivityFeed({ myBakes, theirBakes, recipes }) {
   const [activity, setActivity] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    getActivity().then(a => { setActivity(a); setLoading(false); });
-  }, []);
-
+  useEffect(() => { getActivity().then(a => { setActivity(a); setLoading(false); }); }, []);
   const allBakes = [...myBakes, ...theirBakes];
-  const getBake = (id, prof) => allBakes.find(b => b.id === id);
   const getRecipe = id => recipes.find(r => r.id === id);
-
   if (loading) return <div style={{ ...S.card, textAlign:"center", color:C.muted, fontFamily:"monospace", fontSize:11, padding:16 }}>Loading activity…</div>;
   if (activity.length === 0) return null;
-
   return (
     <div style={{ ...S.card, marginBottom:18 }}>
       <div style={{ ...S.sh, marginBottom:12 }}>Recent Activity</div>
       {activity.map((item, i) => {
-        const bake = getBake(item.bake_id, item.bake_profile);
+        const bake = allBakes.find(b => b.id === item.bake_id);
         const recipe = bake ? getRecipe(bake.recipeId) : null;
         const actor = PROFILES[item.type === "like" ? item.liked_by : item.author];
         const target = PROFILES[item.bake_profile];
@@ -784,7 +693,7 @@ function ActivityFeed({ myBakes, theirBakes, recipes }) {
   );
 }
 
-// ── Comparative Stats ─────────────────────────────────────────────────────────
+// ── FIXED: StatsView now correctly computes outcome counts per profile ────────
 function StatsView({ myBakes, theirBakes, recipes, myProfile }) {
   const other = otherProfile(myProfile);
   const profiles = [myProfile, other];
@@ -805,15 +714,23 @@ function StatsView({ myBakes, theirBakes, recipes, myProfile }) {
       const diff=(new Date(bakeDays[i])-new Date(bakeDays[i-1]))/(1000*60*60*24);
       if (diff<=7) { cur++; maxStreak=Math.max(maxStreak,cur); } else cur=1;
     }
-    const chronoBakes = [...bakes].sort((a,b)=>new Date(a.date)-new Date(b.date));
     return { total, variants, streak:maxStreak, topVessel, topRecipeId };
   }
 
+  // Compute outcome counts per profile — this was missing and caused the crash
+  function outcomeCounts(bakes) {
+    const counts = {};
+    Object.keys(OUTCOMES).forEach(k => counts[k] = 0);
+    bakes.forEach(b => { if (b.outcome && counts[b.outcome] !== undefined) counts[b.outcome]++; });
+    return counts;
+  }
+
   const stats = { [myProfile]: profileStats(myBakes), [other]: profileStats(theirBakes) };
+  const outcomesPerProfile = { [myProfile]: outcomeCounts(myBakes), [other]: outcomeCounts(theirBakes) };
   const allBakes = [...myBakes, ...theirBakes];
   const totalMax = Math.max(stats[myProfile].total, stats[other].total, 1);
 
-  function StatRow({ label, myVal, theirVal, isWinner }) {
+  function StatRow({ label, myVal, theirVal }) {
     const myW = myVal > theirVal;
     const theirW = theirVal > myVal;
     return (
@@ -839,21 +756,11 @@ function StatsView({ myBakes, theirBakes, recipes, myProfile }) {
     <div>
       <h1 style={S.title}>Stats</h1>
       <p style={{ ...S.sub, marginBottom:20 }}>Head to head</p>
-
-      {/* Profile headers */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", gap:8, marginBottom:6 }}>
-        <div style={{ textAlign:"right" }}>
-          <DuckBadge prof={myProfile}/>
-          <div style={{ fontFamily:"monospace", fontSize:9, color:C.muted, marginTop:3 }}>you</div>
-        </div>
+        <div style={{ textAlign:"right" }}><DuckBadge prof={myProfile}/><div style={{ fontFamily:"monospace", fontSize:9, color:C.muted, marginTop:3 }}>you</div></div>
         <div style={{ width:100 }}/>
-        <div style={{ textAlign:"left" }}>
-          <DuckBadge prof={other}/>
-          <div style={{ fontFamily:"monospace", fontSize:9, color:C.muted, marginTop:3 }}>them</div>
-        </div>
+        <div style={{ textAlign:"left" }}><DuckBadge prof={other}/><div style={{ fontFamily:"monospace", fontSize:9, color:C.muted, marginTop:3 }}>them</div></div>
       </div>
-
-      {/* Head to head stats */}
       <div style={S.card}>
         <StatRow label="total bakes" myVal={stats[myProfile].total} theirVal={stats[other].total}/>
         <StatRow label="variants" myVal={stats[myProfile].variants} theirVal={stats[other].variants}/>
@@ -869,8 +776,6 @@ function StatsView({ myBakes, theirBakes, recipes, myProfile }) {
           <div style={{ textAlign:"left", fontSize:12, fontStyle:"italic" }}>{stats[other].topRecipeId ? recipes.find(r=>r.id==stats[other].topRecipeId)?.name || "—" : "—"}</div>
         </div>
       </div>
-
-      {/* Bake volume bars */}
       <div style={S.card}>
         <div style={{ ...S.sh, marginBottom:12 }}>Bake volume</div>
         {profiles.map(p => (
@@ -881,10 +786,9 @@ function StatsView({ myBakes, theirBakes, recipes, myProfile }) {
           </div>
         ))}
       </div>
-
-      {/* Outcome breakdown per duck */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
         {profiles.map(p => {
+          const oc = outcomesPerProfile[p];
           const maxOC = Math.max(...Object.values(oc), 1);
           return (
             <div key={p} style={S.card}>
@@ -900,60 +804,36 @@ function StatsView({ myBakes, theirBakes, recipes, myProfile }) {
           );
         })}
       </div>
-
-
     </div>
   );
 }
 
-// ── Profile Picker ────────────────────────────────────────────────────────────
 function ProfilePicker({ onSelect }) {
   return (
     <div style={{ minHeight:"100vh", background:"#f5f0e8", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Playfair Display', Georgia, serif" }}>
       <div style={{ textAlign:"center" }}>
         <div style={{ marginBottom:16 }}>
           <svg width="210" height="150" viewBox="0 0 210 150" fill="none" xmlns="http://www.w3.org/2000/svg">
-            {/* ── Bread loaf (right side) - flat bottom, no knot ── */}
-            {/* flat bottom shadow */}
             <ellipse cx="152" cy="128" rx="34" ry="6" fill="#5a3a1a" opacity="0.25"/>
-            {/* flat base rect */}
             <rect x="118" y="108" width="68" height="18" rx="3" fill="#a0622a"/>
-            {/* dome top */}
             <ellipse cx="152" cy="108" rx="34" ry="22" fill="#c8863c"/>
-            {/* golden crust */}
             <ellipse cx="152" cy="103" rx="30" ry="18" fill="#e8a84a"/>
-            {/* score line */}
             <path d="M136 96 Q152 88 168 96" stroke="#b07030" strokeWidth="2" fill="none" strokeLinecap="round"/>
-            {/* steam - wiggly lines above loaf */}
             <path d="M140 88 Q137 80 140 72 Q143 64 140 56" stroke="#b0a090" strokeWidth="1.8" strokeLinecap="round" fill="none" opacity="0.6"/>
             <path d="M152 85 Q149 77 152 69 Q155 61 152 53" stroke="#b0a090" strokeWidth="1.8" strokeLinecap="round" fill="none" opacity="0.6"/>
             <path d="M164 88 Q161 80 164 72 Q167 64 164 56" stroke="#b0a090" strokeWidth="1.8" strokeLinecap="round" fill="none" opacity="0.6"/>
-
-            {/* ── Duck (left, facing right toward bread) ── */}
-            {/* duck shadow */}
             <ellipse cx="62" cy="128" rx="28" ry="6" fill="#5a3a1a" opacity="0.2"/>
-            {/* duck body */}
             <ellipse cx="62" cy="108" rx="26" ry="20" fill="#f5d84a"/>
-            {/* wing */}
             <ellipse cx="54" cy="112" rx="15" ry="9" fill="#e2c430" transform="rotate(15 54 112)"/>
-            {/* tail */}
             <path d="M40 106 Q28 96 34 114 Z" fill="#e2c430"/>
-            {/* neck */}
             <ellipse cx="76" cy="90" rx="10" ry="13" fill="#f5d84a"/>
-            {/* head */}
             <circle cx="82" cy="74" r="18" fill="#f5d84a"/>
-            {/* beak pointing right */}
             <path d="M98 74 L108 70 L108 78 Z" fill="#e87832"/>
-            {/* eye */}
             <circle cx="87" cy="69" r="3.5" fill="#1c120a"/>
             <circle cx="88" cy="68" r="1.2" fill="white"/>
-            {/* blush */}
             <ellipse cx="92" cy="76" rx="5" ry="3" fill="#f5a0a0" opacity="0.55"/>
-            {/* chef hat brim - sits right on top of head */}
             <rect x="66" y="56" width="30" height="6" rx="3" fill="#e8e0d0"/>
-            {/* hat body */}
             <rect x="70" y="30" width="22" height="28" rx="4" fill="white"/>
-            {/* hat top puff */}
             <ellipse cx="81" cy="30" rx="13" ry="7" fill="white"/>
           </svg>
         </div>
@@ -975,15 +855,12 @@ function ProfilePicker({ onSelect }) {
   );
 }
 
-// ── Bulk Timer + Fold Logger (embedded in bake form) ─────────────────────────
 function BulkFoldTimer({ folds, setFolds, doughTempAtMix, setDoughTempAtMix, doughTempFinal, setDoughTempFinal, recipe, onFoldLogged }) {
   const [running, setRunning] = useState(false);
   const [startTime, setStartTime] = useState(null);
   const [elapsed, setElapsed] = useState(0);
   const [numFolds, setNumFolds] = useState(4);
   const [intervalMins, setIntervalMins] = useState(30);
-
-  // Detect fold schedule from recipe
   useEffect(() => {
     if (!recipe) return;
     const steps = (recipe.steps || []).join(" ").toLowerCase();
@@ -992,36 +869,22 @@ function BulkFoldTimer({ folds, setFolds, doughTempAtMix, setDoughTempAtMix, dou
     const matchI = steps.match(/(\d+)\s*min(?:utes?)?\s*(?:apart|between|each)/i);
     if (matchI) setIntervalMins(parseInt(matchI[1]));
   }, [recipe?.id]);
-
   useEffect(() => {
     if (!running) return;
     const iv = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 500);
     return () => clearInterval(iv);
   }, [running, startTime]);
-
-
-  function start() {
-    setStartTime(Date.now());
-    setElapsed(0);
-    setRunning(true);
-  }
-
+  function start() { setStartTime(Date.now()); setElapsed(0); setRunning(true); }
   function logFold() {
     const secs = Math.floor((Date.now() - startTime) / 1000);
     const newFolds = [...folds, { id: Date.now()+Math.random(), elapsedSecs: secs, notes: "" }];
     setFolds(newFolds);
     if (onFoldLogged) onFoldLogged();
   }
-
-  function addManual() {
-    setFolds([...folds, { id: Date.now()+Math.random(), elapsedSecs: null, notes: "" }]);
-  }
-
+  function addManual() { setFolds([...folds, { id: Date.now()+Math.random(), elapsedSecs: null, notes: "" }]); }
   function updateFold(id, patch) { setFolds(folds.map(f => f.id===id ? {...f,...patch} : f)); }
   function removeFold(id) { setFolds(folds.filter(f => f.id!==id)); }
-
   const foldsDone = folds.filter(f => f.elapsedSecs != null).length;
-  // Time since last fold (or since start)
   const lastFoldSecs = folds.filter(f => f.elapsedSecs != null).slice(-1)[0]?.elapsedSecs ?? 0;
   const sinceLastFold = running ? Math.max(0, elapsed - lastFoldSecs) : null;
   const nextFoldDue = intervalMins * 60;
@@ -1032,32 +895,23 @@ function BulkFoldTimer({ folds, setFolds, doughTempAtMix, setDoughTempAtMix, dou
       <div>
         <label style={S.label}>{label}</label>
         <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-          <button onClick={()=>onChange(Math.max(min, value-step))}
-            style={{ width:28,height:28,border:"1.5px solid #d0bc98",borderRadius:4,background:"transparent",cursor:"pointer",fontSize:16,color:C.muted,lineHeight:1 }}>−</button>
-          <input type="number" style={{ ...S.input, marginBottom:0, width:52, textAlign:"center" }}
-            value={value} onChange={e=>onChange(parseInt(e.target.value)||min)}/>
-          <button onClick={()=>onChange(Math.min(max, value+step))}
-            style={{ width:28,height:28,border:"1.5px solid #d0bc98",borderRadius:4,background:"transparent",cursor:"pointer",fontSize:16,color:C.muted,lineHeight:1 }}>+</button>
+          <button onClick={()=>onChange(Math.max(min, value-step))} style={{ width:28,height:28,border:"1.5px solid #d0bc98",borderRadius:4,background:"transparent",cursor:"pointer",fontSize:16,color:C.muted,lineHeight:1 }}>−</button>
+          <input type="number" style={{ ...S.input, marginBottom:0, width:52, textAlign:"center" }} value={value} onChange={e=>onChange(parseInt(e.target.value)||min)}/>
+          <button onClick={()=>onChange(Math.min(max, value+step))} style={{ width:28,height:28,border:"1.5px solid #d0bc98",borderRadius:4,background:"transparent",cursor:"pointer",fontSize:16,color:C.muted,lineHeight:1 }}>+</button>
           {unit && <span style={{ fontFamily:"monospace", fontSize:11, color:C.muted }}>{unit}</span>}
         </div>
       </div>
     );
   }
-
   return (
     <div>
       <div style={{ ...S.sh, marginBottom:9 }}>Bulk Ferment & Folds</div>
-
       <div style={{ marginBottom:10 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-          <div><label style={S.label}>Dough Temp at Mix</label>
-          <input style={S.input} placeholder="e.g. 76F" value={doughTempAtMix} onChange={e=>setDoughTempAtMix(e.target.value)}/></div>
-          <div><label style={S.label}>Final Dough Temp</label>
-          <input style={S.input} placeholder="e.g. 78F" value={doughTempFinal} onChange={e=>setDoughTempFinal(e.target.value)}/></div>
+          <div><label style={S.label}>Dough Temp at Mix</label><input style={S.input} placeholder="e.g. 76F" value={doughTempAtMix} onChange={e=>setDoughTempAtMix(e.target.value)}/></div>
+          <div><label style={S.label}>Final Dough Temp</label><input style={S.input} placeholder="e.g. 78F" value={doughTempFinal} onChange={e=>setDoughTempFinal(e.target.value)}/></div>
         </div>
       </div>
-
-      {/* Setup panel */}
       {!running && (
         <div style={{ background:"#f8f4ec", border:"1px solid "+C.border, borderRadius:6, padding:"14px 16px", marginBottom:10 }}>
           {recipe && <div style={{ fontFamily:"monospace", fontSize:10, color:C.brown, marginBottom:12 }}>📖 Suggested from recipe — adjust as needed</div>}
@@ -1065,20 +919,13 @@ function BulkFoldTimer({ folds, setFolds, doughTempAtMix, setDoughTempAtMix, dou
             <NumStepper label="Number of folds" value={numFolds} onChange={setNumFolds} min={1} max={8}/>
             <NumStepper label="Interval between folds" value={intervalMins} onChange={setIntervalMins} min={5} max={120} unit="min" step={5}/>
           </div>
-          <div style={{ fontFamily:"monospace", fontSize:11, color:C.muted, marginBottom:14 }}>
-            {numFolds} folds × {intervalMins} min
-          </div>
+          <div style={{ fontFamily:"monospace", fontSize:11, color:C.muted, marginBottom:14 }}>{numFolds} folds × {intervalMins} min</div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <button style={{ ...S.btn, background:"#2d5a27", fontSize:13, padding:"9px 18px" }} onClick={start}>
-              ▶ Start Bulk
-            </button>
+            <button style={{ ...S.btn, background:"#2d5a27", fontSize:13, padding:"9px 18px" }} onClick={start}>▶ Start Bulk</button>
             <button style={{ ...S.btnO, fontSize:12 }} onClick={addManual}>+ Add fold manually</button>
           </div>
         </div>
       )}
-
-
-      {/* Bulk running panel */}
       {running && (
         <div style={{ background:"#f0f8f0", border:"1px solid #a8d4a0", borderRadius:6, padding:"14px 16px", marginBottom:10 }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
@@ -1103,17 +950,13 @@ function BulkFoldTimer({ folds, setFolds, doughTempAtMix, setDoughTempAtMix, dou
             </div>
           )}
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={logFold}
-              style={{ ...S.btn, flex:1, fontSize:13, padding:"9px 18px",
-                background: overdue?"#c17f2a":"#2d5a27",
-                boxShadow: overdue?"0 0 0 3px #e8c87a":"none", transition:"all 0.3s" }}>
+            <button onClick={logFold} style={{ ...S.btn, flex:1, fontSize:13, padding:"9px 18px", background: overdue?"#c17f2a":"#2d5a27", boxShadow: overdue?"0 0 0 3px #e8c87a":"none", transition:"all 0.3s" }}>
               🤚 {overdue ? "Fold ready — log it!" : `Log Fold ${foldsDone+1}`}
             </button>
             <button style={{ ...S.btnO, fontSize:11, padding:"8px 12px" }} onClick={()=>setRunning(false)}>■ Stop</button>
           </div>
         </div>
       )}
-
       {folds.length > 0 && (
         <div style={{ background:"#f8f4ec", borderRadius:4, overflow:"hidden", marginBottom:9 }}>
           <div style={{ display:"grid", gridTemplateColumns:"28px 1fr 100px 28px", borderBottom:"1px solid "+C.border, padding:"5px 11px" }}>
@@ -1143,9 +986,6 @@ function BulkFoldTimer({ folds, setFolds, doughTempAtMix, setDoughTempAtMix, dou
   );
 }
 
-
-
-
 function Nav({ view, setView, saved, syncing, profile, onSwitchProfile }) {
   const onJ = ["journal","newBake"].includes(view);
   const onR = ["recipes","recipeDetail","newRecipe"].includes(view);
@@ -1172,11 +1012,10 @@ function Nav({ view, setView, saved, syncing, profile, onSwitchProfile }) {
   );
 }
 
-// ── App ───────────────────────────────────────────────────────────────────────
 function App() {
   const [profile, setProfile] = useState(null);
   const [view, setView] = useState("journal");
-  const [journalTab, setJournalTab] = useState("mine"); // mine | theirs | all
+  const [journalTab, setJournalTab] = useState("mine");
   const [myBakes, setMyBakes] = useState([]);
   const [theirBakes, setTheirBakes] = useState([]);
   const [recipes, setRecipes] = useState(BASE_RECIPES);
@@ -1196,12 +1035,11 @@ function App() {
   const [generatingRecipe, setGeneratingRecipe] = useState(false);
   const [search, setSearch] = useState("");
   const [photoUploading, setPhotoUploading] = useState(false);
-  const [draft, setDraft] = useState(null); // saved draft from Supabase
+  const [draft, setDraft] = useState(null);
   const [draftChecked, setDraftChecked] = useState(false);
   const [draftSaving, setDraftSaving] = useState(false);
   const [lastDraftJson, setLastDraftJson] = useState("");
 
-  // Load when profile selected
   useEffect(() => {
     if (!profile) return;
     setLoaded(false);
@@ -1232,7 +1070,6 @@ function App() {
 
   function flashSaved() { setSaved(true); setTimeout(()=>setSaved(false), 2000); }
 
-  // Auto-save draft every 10s when bake form has content
   useEffect(() => {
     if (!profile || !loaded) return;
     const bfJson = JSON.stringify(bf);
@@ -1258,15 +1095,13 @@ function App() {
 
   async function deleteDraft() {
     await sb.from("drafts").delete().eq("profile", profile);
-    setDraft(null);
-    setLastDraftJson("");
+    setDraft(null); setLastDraftJson("");
   }
-
 
   if (!profile) return <ProfilePicker onSelect={p => setProfile(p)} />;
 
   if (!loaded) return (
-    <div style={{ minHeight:"100vh", background:"#f5f0e8", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Playfair Display', Georgia, serif" }}>
+    <div style={{ minHeight:"100vh", background:"#f5f0e8", display:"flex", alignItems:"center", justifyContent:"center" }}>
       <div style={{ textAlign:"center" }}>
         <div style={{ fontSize:40, marginBottom:16 }}>{PROFILES[profile]?.emoji}</div>
         <div style={{ fontFamily:"monospace", fontSize:13, color:"#8b6a50" }}>Loading {PROFILES[profile]?.label}'s bake log…</div>
@@ -1279,19 +1114,17 @@ function App() {
   const setR = patch => setRecipeForm(p=>({...p,...patch}));
   const getRecipe = id => recipes.find(r=>r.id===id);
   const sc = n => { const v=n*scale; return v%1===0?v:v.toFixed(1); };
-
   const navProps = { view, setView, saved, syncing: syncing||draftSaving, profile, onSwitchProfile:()=>{ setProfile(null); setLoaded(false); setView("journal"); } };
 
   function openModal(bake, bProf) { setModal(bake); setModalProfile(bProf); }
-
-  function startEditBake(bake, e) {
-    e.stopPropagation();
-    setEditingBakeId(bake.id);
-    setBakeForm({...bake, recipeId: String(bake.recipeId)});
-    setView("newBake");
-  }
+  function startEditBake(bake, e) { e.stopPropagation(); setEditingBakeId(bake.id); setBakeForm({...bake, recipeId: String(bake.recipeId)}); setView("newBake"); }
   function deleteBake(id, e) { e.stopPropagation(); setDeleteConfirm(id); }
-  function confirmDelete() { setMyBakes(myBakes.filter(b => b.id !== deleteConfirm)); setDeleteConfirm(null); }
+  function confirmDelete() {
+    const id = deleteConfirm;
+    setMyBakes(myBakes.filter(b => b.id !== id));
+    dbDeleteOne("bakes", id, profile);
+    setDeleteConfirm(null);
+  }
 
   async function saveBake() {
     if (bf.isFreeform) {
@@ -1323,7 +1156,26 @@ function App() {
     setView("recipes");
   }
 
-  // ── Journal view ────────────────────────────────────────────────────────────
+  const DraftBanner = () => {
+    if (!draft) return null;
+    return (
+      <div style={{ background:"#fdf5e0", border:"1px solid #e8c87a", borderRadius:6, padding:"12px 16px", marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+        <div>
+          <div style={{ fontFamily:"monospace", fontSize:11, color:"#7a5a20", fontWeight:700, marginBottom:2 }}>📝 You have an unfinished bake</div>
+          <div style={{ fontFamily:"monospace", fontSize:10, color:"#9a7a40" }}>
+            {draft.date ? "Started "+draft.date : "Resume where you left off"}
+            {draft.recipeId ? " · recipe logged" : ""}
+            {draft.folds?.length > 0 ? " · "+draft.folds.length+" fold"+(draft.folds.length>1?"s":"")+" logged" : ""}
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          <button style={{ ...S.btn, background:"#c17f2a", fontSize:11, padding:"6px 14px" }} onClick={()=>{ setBakeForm(draft); }}>Resume</button>
+          <button style={{ ...S.btnO, fontSize:11, padding:"6px 12px" }} onClick={()=>{ deleteDraft(); setDraft(null); }}>Discard</button>
+        </div>
+      </div>
+    );
+  };
+
   if (view==="journal") {
     const displayBakes = journalTab === "mine" ? myBakes.map(b=>({...b,_prof:profile}))
       : journalTab === "theirs" ? theirBakes.map(b=>({...b,_prof:other}))
@@ -1339,7 +1191,6 @@ function App() {
         return true;
       })
       .sort((a,b)=>new Date(b.date)-new Date(a.date));
-
     return (
       <div style={S.app}>
         {modal && <BakeModal bake={modal} bakeProfile={modalProfile} recipe={getRecipe(modal.recipeId)} onClose={()=>setModal(null)} currentProfile={profile}/>}
@@ -1363,10 +1214,7 @@ function App() {
             <h1 style={S.title}>Bake Log</h1>
             <button style={S.btn} onClick={()=>{ setEditingBakeId(null); setBakeForm(emptyBake()); setView("newBake"); }}>+ Log a Bake</button>
           </div>
-
           <ActivityFeed myBakes={myBakes} theirBakes={theirBakes} recipes={recipes}/>
-
-          {/* Toggle */}
           <div style={{ display:"flex", gap:6, marginBottom:14 }}>
             {[["mine", `${PROFILES[profile].emoji} My Bakes`], ["theirs", `${PROFILES[other].emoji} Their Bakes`], ["all","🐥🦆 All Bakes"]].map(([tab, label]) => (
               <button key={tab} onClick={()=>setJournalTab(tab)}
@@ -1375,18 +1223,13 @@ function App() {
               </button>
             ))}
           </div>
-
-          {/* Search */}
           <div style={{ background:C.paper, border:`1px solid ${C.border}`, borderRadius:4, padding:"10px 14px", marginBottom:14 }}>
             <input style={{ ...S.input, marginBottom:6 }} placeholder="Search notes, recipe names…" value={search} onChange={e=>setSearch(e.target.value)}/>
             <div style={{ display:"flex", gap:8 }}>
-              <div style={{ flex:1 }}>
-
-              </div>
+              <div style={{ flex:1 }}/>
               {search && <button style={{ ...S.btnSm, alignSelf:"flex-end", marginBottom:0 }} onClick={()=>setSearch("")}>✕ clear</button>}
             </div>
           </div>
-
           <p style={{ ...S.sub, marginBottom:12 }}>{filtered.length} bake{filtered.length!==1?"s":""} {journalTab==="all"?"total":journalTab==="mine"?"by you":`by ${PROFILES[other].label}`}</p>
           {filtered.length===0 && <div style={{ ...S.card, textAlign:"center", color:C.muted, fontStyle:"italic", padding:32 }}>No bakes here yet.</div>}
           {filtered.map(bake => {
@@ -1422,34 +1265,6 @@ function App() {
     );
   }
 
-  // ── New / Edit Bake ─────────────────────────────────────────────────────────
-  // ── Draft resume banner for newBake ──────────────────────────────────────
-  const DraftBanner = () => {
-    if (!draft) return null;
-    return (
-      <div style={{ background:"#fdf5e0", border:"1px solid #e8c87a", borderRadius:6, padding:"12px 16px", marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-        <div>
-          <div style={{ fontFamily:"monospace", fontSize:11, color:"#7a5a20", fontWeight:700, marginBottom:2 }}>📝 You have an unfinished bake</div>
-          <div style={{ fontFamily:"monospace", fontSize:10, color:"#9a7a40" }}>
-            {draft.date ? "Started "+draft.date : "Resume where you left off"}
-            {draft.recipeId ? " · recipe logged" : ""}
-            {draft.folds?.length > 0 ? " · "+draft.folds.length+" fold"+(draft.folds.length>1?"s":"")+" logged" : ""}
-          </div>
-        </div>
-        <div style={{ display:"flex", gap:8 }}>
-          <button style={{ ...S.btn, background:"#c17f2a", fontSize:11, padding:"6px 14px" }}
-            onClick={()=>{ setBakeForm(draft); }}>
-            Resume
-          </button>
-          <button style={{ ...S.btnO, fontSize:11, padding:"6px 12px" }}
-            onClick={()=>{ deleteDraft(); setDraft(null); }}>
-            Discard
-          </button>
-        </div>
-      </div>
-    );
-  };
-
   if (view==="newBake") return (
     <div style={S.app}>
       {recipePreview && <RecipePreviewModal preview={recipePreview} onConfirm={confirmSaveFreeform} onCancel={()=>setRecipePreview(null)}/>}
@@ -1475,19 +1290,13 @@ function App() {
               </div>
               <div><label style={S.label}>Date</label><input type="date" style={S.input} value={bf.date} onChange={e=>set({date:e.target.value})}/></div>
             </div>
-
             {bf.isFreeform && (
               <div style={{ background:"#f5f0e4", border:"1px solid #d4bc88", borderRadius:4, padding:"13px 14px", marginBottom:11 }}>
                 <div style={{ fontFamily:"monospace", fontSize:10, color:"#7a5a28", textTransform:"uppercase", marginBottom:10 }}>✨ Freeform bake</div>
                 <div style={{ ...S.sh, marginBottom:6 }}>Ingredients</div>
                 {(bf.freeformIngredients||[]).map((ing,idx)=>(
                   <div key={ing.id} style={{ display:"grid", gridTemplateColumns:"2.5fr 1fr 60px 28px", gap:5, marginBottom:5, alignItems:"center" }}>
-                    <FlourSearchInput
-                      value={ing.name}
-                      onChange={v=>set({freeformIngredients:bf.freeformIngredients.map((i,j)=>j===idx?{...i,name:v}:i)})}
-                      flours={flours}
-                      placeholder="e.g. Red fife flour"
-                    />
+                    <FlourSearchInput value={ing.name} onChange={v=>set({freeformIngredients:bf.freeformIngredients.map((i,j)=>j===idx?{...i,name:v}:i)})} flours={flours} placeholder="e.g. Red fife flour"/>
                     <input type="number" style={{ ...S.input, marginBottom:0 }} value={ing.amount} onChange={e=>set({freeformIngredients:bf.freeformIngredients.map((i,j)=>j===idx?{...i,amount:e.target.value}:i)})}/>
                     <select style={{ ...S.input, marginBottom:0, padding:"7px 4px" }} value={ing.unit} onChange={e=>set({freeformIngredients:bf.freeformIngredients.map((i,j)=>j===idx?{...i,unit:e.target.value}:i)})}>
                       <option>g</option><option>kg</option><option>ml</option><option>tsp</option><option>tbsp</option>
@@ -1506,7 +1315,6 @@ function App() {
                 <button style={S.btnSm} onClick={()=>set({freeformSteps:[...(bf.freeformSteps||[]),""]})}>+ Step</button>
               </div>
             )}
-
             {!bf.isFreeform && (
               <label style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontSize:13, marginBottom:10 }}>
                 <input type="checkbox" checked={bf.isVariant} onChange={e=>set({isVariant:e.target.checked})}/>
@@ -1530,12 +1338,9 @@ function App() {
             </div>
             <hr style={S.divider}/>
             <BulkFoldTimer
-              folds={bf.folds}
-              setFolds={folds=>set({folds})}
-              doughTempAtMix={bf.doughTempAtMix||""}
-              setDoughTempAtMix={v=>set({doughTempAtMix:v})}
-              doughTempFinal={bf.doughTempFinal||""}
-              setDoughTempFinal={v=>set({doughTempFinal:v})}
+              folds={bf.folds} setFolds={folds=>set({folds})}
+              doughTempAtMix={bf.doughTempAtMix||""} setDoughTempAtMix={v=>set({doughTempAtMix:v})}
+              doughTempFinal={bf.doughTempFinal||""} setDoughTempFinal={v=>set({doughTempFinal:v})}
               recipe={bf.recipeId ? getRecipe(parseInt(bf.recipeId)) : null}
               onFoldLogged={()=>saveDraftNow({...bf})}
             />
@@ -1552,9 +1357,9 @@ function App() {
               <TimeInput label="💨 Uncovered" value={bf.bakeTimeUncovered} onChange={v=>set({bakeTimeUncovered:v})} maxH={1}/>
             </div>
             <div style={{ maxWidth:220 }}><label style={S.label}>Location</label>
-                <select style={S.input} value={bf.location} onChange={e=>set({location:e.target.value})}>
-                  {LOCATIONS.map(l=><option key={l}>{l}</option>)}
-                </select></div>
+              <select style={S.input} value={bf.location} onChange={e=>set({location:e.target.value})}>
+                {LOCATIONS.map(l=><option key={l}>{l}</option>)}
+              </select></div>
             <hr style={S.divider}/>
             <label style={S.label}>Rating</label>
             <div style={{ marginBottom:10 }}><Stars value={bf.rating} onChange={v=>set({rating:v})}/></div>
@@ -1598,8 +1403,7 @@ function App() {
                     onClick={saveBake} disabled={(!bf.recipeId && !bf.isFreeform)||!bf.notes}>
                     {editingBakeId ? "Update Bake" : bf.isFreeform ? "✨ Generate Recipe & Save" : "Save Bake"}
                   </button>
-                  <button style={{ ...S.btnO, padding:"12px 16px", fontSize:12 }} disabled={draftSaving}
-                    onClick={()=>saveDraftNow(bf)}>
+                  <button style={{ ...S.btnO, padding:"12px 16px", fontSize:12 }} disabled={draftSaving} onClick={()=>saveDraftNow(bf)}>
                     {draftSaving ? "⏳ Saving…" : "💾 Save Draft"}
                   </button>
                 </div>
@@ -1610,7 +1414,6 @@ function App() {
     </div>
   );
 
-  // ── Recipes ─────────────────────────────────────────────────────────────────
   if (view==="recipes") return (
     <div style={S.app}>
       <Nav {...navProps}/>
@@ -1645,7 +1448,6 @@ function App() {
     </div>
   );
 
-  // ── Recipe Detail ────────────────────────────────────────────────────────────
   if (view==="recipeDetail" && selRecipe) {
     const r = selRecipe;
     const myRb = myBakes.filter(b=>b.recipeId===r.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
@@ -1721,7 +1523,6 @@ function App() {
     );
   }
 
-  // ── New Recipe ───────────────────────────────────────────────────────────────
   if (view==="newRecipe") return (
     <div style={S.app}>
       <Nav {...navProps}/>
@@ -1744,12 +1545,7 @@ function App() {
             <h3 style={{ fontStyle:"italic", marginBottom:10, fontSize:14 }}>Ingredients</h3>
             {rf.ingredients.map((ing,idx)=>(
               <div key={ing.id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 65px", gap:6, marginBottom:5 }}>
-                <FlourSearchInput
-                  value={ing.name}
-                  onChange={v=>setR({ingredients:rf.ingredients.map((i,j)=>j===idx?{...i,name:v}:i)})}
-                  flours={flours}
-                  placeholder="Ingredient name"
-                />
+                <FlourSearchInput value={ing.name} onChange={v=>setR({ingredients:rf.ingredients.map((i,j)=>j===idx?{...i,name:v}:i)})} flours={flours} placeholder="Ingredient name"/>
                 <input type="number" style={{ ...S.input, marginBottom:0 }} placeholder="Amount" value={ing.amount} onChange={e=>setR({ingredients:rf.ingredients.map((i,j)=>j===idx?{...i,amount:e.target.value}:i)})}/>
                 <select style={{ ...S.input, marginBottom:0 }} value={ing.unit} onChange={e=>setR({ingredients:rf.ingredients.map((i,j)=>j===idx?{...i,unit:e.target.value}:i)})}>
                   <option>g</option><option>kg</option><option>ml</option><option>tsp</option><option>tbsp</option>
@@ -1773,7 +1569,6 @@ function App() {
     </div>
   );
 
-  // ── Pantry ───────────────────────────────────────────────────────────────────
   if (view==="pantry") return (
     <div style={S.app}>
       <Nav {...navProps}/>
@@ -1781,7 +1576,6 @@ function App() {
     </div>
   );
 
-  // ── Stats ────────────────────────────────────────────────────────────────────
   if (view==="stats") return (
     <div style={S.app}>
       <Nav {...navProps}/>
