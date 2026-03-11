@@ -95,6 +95,9 @@ async function getComments(bakeId, bakeProfile) {
 async function addComment(bakeId, bakeProfile, author, body) {
   await sb.from("comments").insert({ bake_id: bakeId, bake_profile: bakeProfile, author, body });
 }
+async function deleteComment(commentId) {
+  await sb.from("comments").delete().eq("id", commentId);
+}
 
 async function getActivity() {
   const [likesRes, commentsRes] = await Promise.all([
@@ -416,6 +419,11 @@ function LikesComments({ bake, bakeProfile, currentProfile }) {
     const c = await getComments(bake.id, bakeProfile);
     setComments(c); setCommentText("");
   }
+  async function handleDeleteComment(commentId) {
+    await deleteComment(commentId);
+    const c = await getComments(bake.id, bakeProfile);
+    setComments(c);
+  }
   const liked = likes.includes(currentProfile);
   if (loading) return <div style={{ fontFamily:"monospace", fontSize:10, color:C.muted }}>Loading…</div>;
   return (
@@ -431,9 +439,12 @@ function LikesComments({ bake, bakeProfile, currentProfile }) {
           {comments.map(c => (
             <div key={c.id} style={{ display:"flex", gap:8, marginBottom:7 }}>
               <span style={{ fontSize:14, flexShrink:0 }}>{PROFILES[c.author]?.emoji}</span>
-              <div style={{ background:"#f5f0e8", borderRadius:"0 8px 8px 8px", padding:"6px 10px", flex:1 }}>
+              <div style={{ background:"#f5f0e8", borderRadius:"0 8px 8px 8px", padding:"6px 10px", flex:1, position:"relative" }}>
                 <span style={{ fontFamily:"monospace", fontSize:9, color:PROFILES[c.author]?.color, fontWeight:700 }}>{PROFILES[c.author]?.label}</span>
                 <span style={{ fontFamily:"monospace", fontSize:9, color:C.muted, marginLeft:6 }}>{timeAgo(c.created_at)}</span>
+                {c.author === currentProfile && (
+                  <button onClick={()=>handleDeleteComment(c.id)} style={{ position:"absolute", top:4, right:4, background:"none", border:"none", cursor:"pointer", fontSize:11, padding:"2px 6px", color:C.muted, opacity:0.6 }} title="Delete comment">×</button>
+                )}
                 <p style={{ fontSize:12, marginTop:2, lineHeight:1.5 }}>{c.body}</p>
               </div>
             </div>
