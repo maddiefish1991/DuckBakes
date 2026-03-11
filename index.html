@@ -678,7 +678,7 @@ function ActivityFeed({ myBakes, theirBakes, recipes }) {
         return (
           <div key={i} style={{ display:"flex", gap:10, alignItems:"flex-start", marginBottom:10, paddingBottom:10, borderBottom: i < activity.length-1 ? `1px solid ${C.border}` : "none" }}>
             <span style={{ fontSize:18, flexShrink:0 }}>{actor?.emoji}</span>
-            <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ flex:1, minWidth:0, cursor: bake ? "pointer" : "default" }} onClick={()=>bake&&openModal(bake, item.bake_profile)}>
               <span style={{ fontFamily:"monospace", fontSize:10, color:actor?.color, fontWeight:700 }}>{actor?.label}</span>
               {item.type === "like"
                 ? <span style={{ fontFamily:"monospace", fontSize:10, color:C.muted }}> ❤️ liked {target?.emoji} {target?.label}'s <em>{recipe?.name || "bake"}</em></span>
