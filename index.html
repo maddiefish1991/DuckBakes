@@ -397,7 +397,7 @@ function FoldsTable({ folds, doughTempAtMix, doughTempFinal }) {
   );
 }
 
-function LikesComments({ bake, bakeProfile, currentProfile }) {
+function LikesComments({ bake, bakeProfile, currentProfile, onCommentChange }) {
   const [likes, setLikes] = useState([]);
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
@@ -418,11 +418,13 @@ function LikesComments({ bake, bakeProfile, currentProfile }) {
     await addComment(bake.id, bakeProfile, currentProfile, commentText.trim());
     const c = await getComments(bake.id, bakeProfile);
     setComments(c); setCommentText("");
+    if (onCommentChange) onCommentChange();
   }
   async function handleDeleteComment(commentId) {
     await deleteComment(commentId);
     const c = await getComments(bake.id, bakeProfile);
     setComments(c);
+    if (onCommentChange) onCommentChange();
   }
   const liked = likes.includes(currentProfile);
   if (loading) return <div style={{ fontFamily:"monospace", fontSize:10, color:C.muted }}>Loading…</div>;
@@ -461,7 +463,7 @@ function LikesComments({ bake, bakeProfile, currentProfile }) {
   );
 }
 
-function BakeModal({ bake, bakeProfile, recipe, onClose, currentProfile }) {
+function BakeModal({ bake, bakeProfile, recipe, onClose, currentProfile, onCommentChange }) {
   if (!bake) return null;
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(28,18,10,0.65)", zIndex:300, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"28px 16px", overflowY:"auto" }} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -503,7 +505,7 @@ function BakeModal({ bake, bakeProfile, recipe, onClose, currentProfile }) {
             ))}
           </div>
         )}
-        <LikesComments bake={bake} bakeProfile={bakeProfile} currentProfile={currentProfile}/>
+        <LikesComments bake={bake} bakeProfile={bakeProfile} currentProfile={currentProfile} onCommentChange={onCommentChange}/>
       </div>
     </div>
   );
@@ -670,10 +672,10 @@ function MiniBar({ value, max, color="#8b5e3c", height=18 }) {
   );
 }
 
-function ActivityFeed({ myBakes, theirBakes, recipes, openModal, myProfile }) {
+function ActivityFeed({ myBakes, theirBakes, recipes, openModal, myProfile, refreshKey }) {
   const [activity, setActivity] = useState([]);
   const [loading, setLoading] = useState(true);
-  useEffect(() => { getActivity().then(a => { setActivity(a); setLoading(false); }); }, []);
+  useEffect(() => { setLoading(true); getActivity().then(a => { setActivity(a); setLoading(false); }); }, [refreshKey]);
   const other = otherProfile(myProfile);
   const allBakes = [...myBakes.map(b=>({...b,_prof:myProfile})), ...theirBakes.map(b=>({...b,_prof:other}))];
   const getRecipe = id => recipes.find(r => r.id === id);
@@ -1040,6 +1042,7 @@ function App() {
   const [rf, setRecipeForm] = useState({ name:"", author:"", description:"", hydration:75, tags:"", ingredients:[{id:Date.now(),name:"",amount:"",unit:"g"}], steps:[""] });
   const [modal, setModal] = useState(null);
   const [modalProfile, setModalProfile] = useState(null);
+  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const [saved, setSaved] = useState(false);
   const [editingBakeId, setEditingBakeId] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -1205,7 +1208,7 @@ function App() {
       .sort((a,b)=>new Date(b.date)-new Date(a.date));
     return (
       <div style={S.app}>
-        {modal && <BakeModal bake={modal} bakeProfile={modalProfile} recipe={getRecipe(modal.recipeId)} onClose={()=>setModal(null)} currentProfile={profile}/>}
+        {modal && <BakeModal bake={modal} bakeProfile={modalProfile} recipe={getRecipe(modal.recipeId)} onClose={()=>setModal(null)} currentProfile={profile} onCommentChange={()=>setActivityRefreshKey(k=>k+1)}/>}
         {recipePreview && <RecipePreviewModal preview={recipePreview} onConfirm={confirmSaveFreeform} onCancel={()=>setRecipePreview(null)}/>}
         {deleteConfirm && (
           <div style={{ position:"fixed", inset:0, background:"rgba(28,18,10,0.6)", zIndex:400, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
@@ -1271,7 +1274,7 @@ function App() {
               </div>
             );
           })}
-          <ActivityFeed myBakes={myBakes} theirBakes={theirBakes} recipes={recipes} openModal={openModal} myProfile={profile}/>
+          <ActivityFeed myBakes={myBakes} theirBakes={theirBakes} recipes={recipes} openModal={openModal} myProfile={profile} refreshKey={activityRefreshKey}/>
         </main>
       </div>
     );
@@ -1466,7 +1469,7 @@ function App() {
     const theirRb = theirBakes.filter(b=>b.recipeId===r.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
     return (
       <div style={S.app}>
-        {modal && <BakeModal bake={modal} bakeProfile={modalProfile} recipe={r} onClose={()=>setModal(null)} currentProfile={profile}/>}
+        {modal && <BakeModal bake={modal} bakeProfile={modalProfile} recipe={r} onClose={()=>setModal(null)} currentProfile={profile} onCommentChange={()=>setActivityRefreshKey(k=>k+1)}/>}
         <Nav {...navProps}/>
         <main style={S.main}>
           <button style={{ ...S.btnO, marginBottom:18, fontSize:12 }} onClick={()=>setView("recipes")}>← Back</button>
